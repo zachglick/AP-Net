@@ -27,7 +27,7 @@ The trained AP-Net model described in the paper can be used to perform inference
 This is demonstrated in the script `infer_sapt.py`, which predicts the interaction energy (total SAPT0 and components) for all dimers in a dataset.
 Run as: 
 ```
->>> python infer_sapy.py --help
+>>> python infer_sapt.py --help
 ```
 for more information.
 
