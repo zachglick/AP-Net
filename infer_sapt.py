@@ -14,14 +14,32 @@ if __name__ == "__main__":
                         help='Dataset to test trained model on (nma-testing, s66x8, etc.)')
     args = parser.parse_args(sys.argv[1:])
 
+    # optional arguments: feature hyperparameters
+    parser.add_argument('--acsf_nmu',
+                        help='ACSF hyperparameter (number of radial gaussians).',
+                        type=int,
+                        default=43)
+    parser.add_argument('--apsf_nmu',
+                        help='APSF hyperparameter (number of angular gaussians).',
+                        type=int,
+                        default=21)
+    parser.add_argument('--acsf_eta',
+                        help='ACSF hyperparameter (radial gaussian width).',
+                        type=int,
+                        default=100)
+    parser.add_argument('--apsf_eta',
+                        help='APSF hyperparameter (angular gaussian width).',
+                        type=int,
+                        default=25)
+
     modelnames = [f'paper{i}' for i in range(1,9)]
     dataset = args.dataset
 
     # feature hyperparameters
-    ACSF_nmu = 43
-    APSF_nmu = 21
-    ACSF_eta = 100
-    APSF_eta = 25
+    ACSF_nmu = args.acsf_nmu
+    APSF_nmu = args.apsf_nmu
+    ACSF_eta = args.acsf_eta
+    APSF_eta = args.apsf_eta
 
     # store predictions, labels and errors for each SAPT component in a dictionary
     prds = {}

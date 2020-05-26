@@ -25,13 +25,19 @@ AP-Net requires atom-pair descriptors for both inference and training. Instead o
 
 The trained AP-Net model described in the paper can be used to perform inferences on any included or added datasets.
 This is demonstrated in the script `infer_sapt.py`, which predicts the interaction energy (total SAPT0 and components) for all dimers in a dataset.
-Run as: ```>>> python infer_sapy.py --help``` for more information.
+Run as: 
+```
+>>> python infer_sapy.py --help
+```
+for more information.
 
 
 ## Training a new model
 
 A new AP-Net model can be trained on an arbitrary dataset of SAPT0 dimer interaction energies.
 This is demonstrated in the script `train_sapt_component.py` which trains a single model to predict a single SAPT0 component.
-Run as: ```>>> python train_sapt_component.py --help``` for more information.
-
-
+Run as: 
+```
+>>> python train_sapt_component.py --help
+```
+for more information.
