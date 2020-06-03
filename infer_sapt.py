@@ -12,7 +12,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Predict SAPT0 interaction energy with a trained AP-Net model')
     parser.add_argument('dataset',
                         help='Dataset to test trained model on (nma-testing, s66x8, etc.)')
-    args = parser.parse_args(sys.argv[1:])
 
     # optional arguments: feature hyperparameters
     parser.add_argument('--acsf_nmu',
@@ -32,6 +31,7 @@ if __name__ == "__main__":
                         type=int,
                         default=25)
 
+    args = parser.parse_args(sys.argv[1:])
     modelnames = [f'paper{i}' for i in range(1,9)]
     dataset = args.dataset
 

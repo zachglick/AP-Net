@@ -78,7 +78,6 @@ if __name__ == "__main__":
 
     adam_lr = args.adam_lr
     epochs = args.epochs
-    print(adam_lr, epochs)
     optimizer = tf.keras.optimizers.Adam(adam_lr)
     best_mae = np.inf
     print('\nEpoch ||  Validation Errors                                             Best ')
