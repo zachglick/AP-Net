@@ -32,7 +32,7 @@ if __name__ == "__main__":
                         default=25)
 
     args = parser.parse_args(sys.argv[1:])
-    modelnames = [f'paper{i}' for i in range(1,9)]
+    modelnames = ['nma1']
     dataset = args.dataset
 
     # feature hyperparameters
@@ -42,75 +42,80 @@ if __name__ == "__main__":
     APSF_eta = args.apsf_eta
 
     # store predictions, labels and errors for each SAPT component in a dictionary
-    prds = {}
-    labs = {}
-    errs = {}
+    preds = []
+
+    dimers, labels = util.get_dimers(dataset)
+    Ne = len(dimers)
 
     # iterate over the four SAPT0 components
     components = ['Elst', 'Exch', 'Ind', 'Disp']
 
-    for c in components:
-                    
-        # load dataset (features and labels) for this component
-        ZA, ZB, GA, GB, IA, IB, RAB, y = util.get_dataset(dataset, c, ACSF_nmu, APSF_nmu, ACSF_eta, APSF_eta)
-        lab = np.array(y) # make sure it's not a list
-        #lab = np.array([None for _ in y])
+    print(f'\nEvaluating ? with AP-Net')
 
-        print(f'\nEvaluating {c} with AP-Net')
+    # load and infer with all eight models to predict this ensemble
+    for modelind, modelname in enumerate(modelnames):
 
-        # load and infer with all eight models to predict this ensemble
-        for modelind, modelname in enumerate(modelnames):
+        # load the model
+        model_dir = f'./models/{modelname}'
+        model = tf.keras.models.load_model(f'{model_dir}/model.h5', compile=False)
+        #print(f'Evaluating {c} with AP-Net ensemble member {i+1} out of 8')
+        print('model loaded')
 
-            # load the model
-            model_dir = f'./models/{c}_{modelname}'
-            model = tf.keras.models.load_model(f'{model_dir}/model.h5', compile=False)
-            #print(f'Evaluating {c} with AP-Net ensemble member {i+1} out of 8')
+        preds = []
+        start = time.time()
+        for i, dimer, label in zip(list(range(Ne)), dimers, labels):
+            if (i+1) % 100 == 0:
+                print(i+1)
+            feat = util.make_features(*dimer)
+            #pred = model(feat, training=False).numpy()
+            #pred = model.predict(feat, batch_size = feat[0].shape[0])
+            pred = util.predict_single(model, feat)
+            pred = np.sum(pred, axis=0)
+            preds.append(pred)
+        print(time.time() - start)
+        preds = np.array(preds)
+        errs = preds - labels
+        print_out_errors_comp(-1, errs)
 
-            prd = []
-            for i in range(len(ZA)):
-                GAi, GBi = inflate(GA[i], GB[i])
-                prd.append(np.sum(model([ZA[i], ZB[i], RAB[i], GAi, GBi, IA[i], IB[i]]).numpy()))
 
-            prd = np.array(prd)
-            prds[(c, modelname)] = prd
-            labs[(c, modelname)] = lab
 
-            # print errors if label exists
-            if np.all(lab != None):
-                err = prd - lab
-                aerr = np.absolute(err)
-                print(f' Ensemble member {modelind+1} MAE : {np.average(aerr):8.3f}')
-            else:
-                print('None')
 
-        prd_avg = np.average([prds[(c, modelname)] for modelname in modelnames], axis=0)
+    #    # print errors if label exists
+    #    if np.all(lab != None):
+    #        err = prd - lab
+    #        aerr = np.absolute(err)
+    #        print(f' Ensemble member {modelind+1} MAE : {np.average(aerr):8.3f}')
+    #    else:
+    #        print('None')
 
-        # print errors if label exists
-        if np.all(lab != None):
-            err_avg = prd_avg - lab
-            aerr_avg = np.absolute(err_avg)
-            print(f' Ensemble total    MAE : {np.average(aerr_avg):8.3f}')
-        else:
-            print('None')
+    #prd_avg = np.average([prds[(c, modelname)] for modelname in modelnames], axis=0)
 
-    for modelname in modelnames:
-        prds[('Total', modelname)] = np.sum([prds[(c, modelname)] for c in components], axis=0)
-        try:
-            labs[('Total', modelname)] = np.sum([labs[(c, modelname)] for c in components], axis=0)
-        except:
-            labs[('Total', modelname)] = labs[components[0], modelname]
+    ## print errors if label exists
+    #if np.all(lab != None):
+    #    err_avg = prd_avg - lab
+    #    aerr_avg = np.absolute(err_avg)
+    #    print(f' Ensemble total    MAE : {np.average(aerr_avg):8.3f}')
+    #else:
+    #    print('None')
 
-    components.insert(0, 'Total')
+    #for modelname in modelnames:
+    #    prds[('Total', modelname)] = np.sum([prds[(c, modelname)] for c in components], axis=0)
+    #    try:
+    #        labs[('Total', modelname)] = np.sum([labs[(c, modelname)] for c in components], axis=0)
+    #    except:
+    #        labs[('Total', modelname)] = labs[components[0], modelname]
 
-    for c in components:
-        prds[(c,)] = np.stack([prds[(c, modelname)] for modelname in modelnames])
-        labs[(c,)] = labs[(c, modelnames[0])].reshape(1,1,-1)
+    #components.insert(0, 'Total')
 
-    prds_all = np.stack([prds[(c,)] for c in components])
-    labs_all = np.stack([labs[(c,)] for c in components])
-    np.save(f'{dataset}-predictions', prds_all)
-    np.save(f'{dataset}-labels', labs_all)
+    #for c in components:
+    #    prds[(c,)] = np.stack([prds[(c, modelname)] for modelname in modelnames])
+    #    labs[(c,)] = labs[(c, modelnames[0])].reshape(1,1,-1)
 
-    if np.all(lab != None):
-        errs_all = prds_all - labs_all
-        np.save(f'{dataset}-errors', errs_all)
+    #prds_all = np.stack([prds[(c,)] for c in components])
+    #labs_all = np.stack([labs[(c,)] for c in components])
+    #np.save(f'{dataset}-predictions', prds_all)
+    #np.save(f'{dataset}-labels', labs_all)
+
+    #if np.all(lab != None):
+    #    errs_all = prds_all - labs_all
+    #    np.save(f'{dataset}-errors', errs_all)

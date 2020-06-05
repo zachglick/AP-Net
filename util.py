@@ -22,11 +22,27 @@ z_to_ind = {
 def print_out_errors(epoch, err, symbol=''):
     """ err is a numpy array w/ dims [NMOL] """
     print((f'{epoch:4d}  ||  '
-           f'Range: [{np.min(err):6.3f},{np.max(err):6.3f}]   '
+           f'Range: [{np.min(err):7.3f},{np.max(err):6.3f}]   '
            f'ME:{np.average(err):6.3f}   '
            f'RMSE:{np.sqrt(np.average(np.square(err))):6.3f}   '
            f'MAE:{np.average(np.absolute(err)):6.3f} {symbol}'))
 
+def print_out_errors_comp(epoch, err, symbol=''):
+    """ err is a numpy array w/ dims [NMOL x 4] """
+    err_tot = np.sum(err, axis=1)
+    print()
+    print((f'{epoch:4d}  ||  '
+           f'Range: [{np.min(err_tot):7.3f},{np.max(err_tot):6.3f}]   '
+           f'ME:{np.average(err_tot):6.3f}   '
+           f'RMSE:{np.sqrt(np.average(np.square(err_tot))):6.3f}   '
+           f'MAE:{np.average(np.absolute(err_tot)):6.3f} {symbol}'))
+    for ci in range(4):
+        err_comp = err[:,ci]
+        print((f'      ||  '
+               f'Range: [{np.min(err_comp):7.3f},{np.max(err_comp):6.3f}]   '
+               f'ME:{np.average(err_comp):6.3f}   '
+               f'RMSE:{np.sqrt(np.average(np.square(err_comp))):6.3f}   '
+               f'MAE:{np.average(np.absolute(err_comp)):6.3f}'))
 
 def int_to_onehot(arr):
     """ arrs is a numpy array of integers w/ dims [NATOM]"""
@@ -36,6 +52,26 @@ def int_to_onehot(arr):
         if z > 0:
             arr2[i, z_to_ind[z]] = 1
     return arr2
+
+def make_batches(dimer_list, label_list, batch_size=8, order=None):
+    dimer_batches = []
+    label_batches = []
+    N = len(dimer_list)
+    for i_start in range(0, N, batch_size):
+        i_end = min(i_start + batch_size, N)
+        if order is not None:
+            # can't slice list w/ arb inds
+            #dimer_batch = dimer_list[order[i_start:i_end]]
+            #label_batch = label_list[order[i_start:i_end]]
+            dimer_batch = [dimer_list[i] for i in order[i_start:i_end]]
+            label_batch = [label_list[i] for i in order[i_start:i_end]]
+        else:
+            dimer_batch = dimer_list[i_start:i_end]
+            label_batch = label_list[i_start:i_end]
+        dimer_batches.append(dimer_batch)
+        label_batches.append(label_batch)
+    return dimer_batches, label_batches
+
 
 
 def inflate(GA, GB):
@@ -55,13 +91,91 @@ def inflate(GA, GB):
     return GA_, GB_
 
 
-def get_dataset(dataset, component=None, ACSF_nmu=43, APSF_nmu=21, ACSF_eta=100, APSF_eta=25):
+def get_dimers(dataset):
+    """
+    Get molecular dimer (atoms and coordinates) and SAPT0 labels for a specified dataset
+
+    Args:
+        dataset: string corresponding to name of dataset
+
+    Returns tuple of 
+    Each element of the tuple is a 
+    """
+
+    # load dimer data
+    if not os.path.isfile(f'datasets/{dataset}/dimers.pkl'):
+       raise Exception(f'No dataset found at datasets/{dataset}/dimers.pkl')
+    df = pd.read_pickle(f'datasets/{dataset}/dimers.pkl')
+
+    # extract atom types and atomic coordinates
+    ZA = df['ZA'].tolist()
+    ZB = df['ZB'].tolist()
+    RA = df['RA'].tolist()
+    RB = df['RB'].tolist()
+
+    dimer = list(zip(RA, RB, ZA, ZB))
+
+    # extract interaction energy label (if specified for the datset)
+    try:
+        sapt = df[['Elst', 'Exch', 'Ind', 'Disp']].to_numpy()
+    except:
+        sapt = None
+
+    return dimer, sapt
+
+def make_features(RA, RB, ZA, ZB, ACSF_nmu=43, APSF_nmu=21, ACSF_eta=100, APSF_eta=25):
+
+    nA = RA.shape[0]
+    nB = RB.shape[0]
+    GA, GB, IA, IB = features.calculate_dimer(RA, RB, ZA, ZB)
+    GA, GB = inflate(GA, GB)
+
+    # append 1/D to D
+    RAB = distance_matrix(RA, RB)
+    RAB = np.stack([RAB, 1.0 / RAB], axis=-1)
+
+    # append onehot(Z) to Z
+    ZA = np.concatenate([ZA.reshape(-1,1), int_to_onehot(ZA)], axis=1)
+    ZB = np.concatenate([ZB.reshape(-1,1), int_to_onehot(ZB)], axis=1)
+
+    # tile ZA by atoms in monomer B and vice versa
+    ZA = np.expand_dims(ZA, axis=1)
+    ZA = np.tile(ZA, (1, nB, 1))
+    ZB = np.expand_dims(ZB, axis=0)
+    ZB = np.tile(ZB, (nA,1,1))
+
+    #ZA = ZA.astype(float)
+    #ZB = ZA.astype(float)
+
+    # flatten the NA, NB indices
+    ZA = ZA.reshape((-1,) + ZA.shape[2:]) 
+    ZB = ZB.reshape((-1,) + ZB.shape[2:]) 
+    RAB = RAB.reshape((-1,) + RAB.shape[2:])
+    IA = IA.reshape((-1,) + IA.shape[2:])
+    IB = IB.reshape((-1,) + IB.shape[2:])
+
+    # APSF is already made per atom pair 
+    # We won't tile ACSFs (which are atomic) into atom pairs b/c memory, do it at runtime instead
+
+    # these are the final shapes:
+    # ZA[i]  shape: NA * NB x (NZ + 1)
+    # ZB[i]  shape: NA * NB x (NZ + 1)
+    # GA[i]  shape: NA x NMU1 x NZ
+    # GB[i]  shape: NB x NMU1 x NZ
+    # IA[i]  shape: NA * NB x NMU2 x NZ
+    # IB[i]  shape: NA * NB x NMU2 x NZ
+    # RAB[i] shape: NA * NB x 3
+    # y[i]   scalar
+
+    return (ZA, ZB, RAB, GA, GB, IA, IB)
+
+
+def get_dataset(dataset, ACSF_nmu=43, APSF_nmu=21, ACSF_eta=100, APSF_eta=25):
     """
     Get AP-Net features and a SAPT0 label for a specified dataset
 
     Args:
         dataset: string corresponding to name of dataset
-        component: string indicating which SAPT component to extract (Total, Elst, Exch, Ind, or Disp)
         ACSF_nmu: number of radial shifts for the ACSF descriptor
         APSF_nmu: number of angular shifts for the APSF descriptor
         ACSF_eta: gaussian width parameter of the ACSF descriptor
@@ -107,10 +221,10 @@ def get_dataset(dataset, component=None, ACSF_nmu=43, APSF_nmu=21, ACSF_eta=100,
     IB = df_dimer['APSF_B_A'].tolist()
 
     # extract interaction energy label (if specified for the datset)
-    if component is not None:
-        y = df_dimer[component].tolist()
-    else:
-        y = [None] * N_dimer
+    try:
+        y = df_dimer[['Elst', 'Exch', 'Ind', 'Disp']].to_numpy()
+    except:
+        y = None
 
     # append onehot(Z) to Z
     ZA = [np.concatenate([za.reshape(-1,1), int_to_onehot(za)], axis=1) for za in ZA]
@@ -152,7 +266,7 @@ def get_dataset(dataset, component=None, ACSF_nmu=43, APSF_nmu=21, ACSF_eta=100,
     return ZA, ZB, GA, GB, IA, IB, RAB, y
 
 
-def make_model(component, nZ=6, ACSF_nmu=43, APSF_nmu=21):
+def make_model(nZ=6, ACSF_nmu=43, APSF_nmu=21):
     """
     Returns a keras model for atomic pairwise intermolecular energy predictions
     """
@@ -179,63 +293,74 @@ def make_model(component, nZ=6, ACSF_nmu=43, APSF_nmu=21):
     # r and 1/r are both passed in, which is redundant but simplifies the code
     input_layerR = tf.keras.Input(shape=(2,), dtype='float64')
 
-    # flatten the symmetry functions
-    GA = tf.keras.layers.Flatten()(input_layerGA)
-    GB = tf.keras.layers.Flatten()(input_layerGB)
-    IA = tf.keras.layers.Flatten()(input_layerIA)
-    IB = tf.keras.layers.Flatten()(input_layerIB)
+    output_layers = []
 
-    # encode the concatenation of the element and ACSF into a smaller fixed-length vector
-    dense_r = tf.keras.layers.Dense(ACSF_nodes, activation='relu')
-    GA = tf.keras.layers.Concatenate()([input_layerZA, GA])
-    GA = dense_r(GA)
-    GB = tf.keras.layers.Concatenate()([input_layerZB, GB])
-    GB = dense_r(GB)
+    for component_ind in range(4):
+        # flatten the symmetry functions
+        GA = tf.keras.layers.Flatten()(input_layerGA)
+        GB = tf.keras.layers.Flatten()(input_layerGB)
+        IA = tf.keras.layers.Flatten()(input_layerIA)
+        IB = tf.keras.layers.Flatten()(input_layerIB)
 
-    # encode the concatenation of the element and APSF into a smaller fixed-length vector
-    dense_i = tf.keras.layers.Dense(APSF_nodes, activation='relu')
-    IA = tf.keras.layers.Concatenate()([input_layerZA, IA])
-    IA = dense_i(IA)
-    IB = tf.keras.layers.Concatenate()([input_layerZB, IB])
-    IB = dense_i(IB)
+        # encode the concatenation of the element and ACSF into a smaller fixed-length vector
+        dense_r = tf.keras.layers.Dense(ACSF_nodes, activation='relu')
+        GA = tf.keras.layers.Concatenate()([input_layerZA, GA])
+        GA = dense_r(GA)
+        GB = tf.keras.layers.Concatenate()([input_layerZB, GB])
+        GB = dense_r(GB)
 
-    # concatenate the atom centered and atom pair symmetry functions
-    GA = tf.keras.layers.Concatenate()([GA, IA])
-    GB = tf.keras.layers.Concatenate()([GB, IB])
+        # encode the concatenation of the element and APSF into a smaller fixed-length vector
+        dense_i = tf.keras.layers.Dense(APSF_nodes, activation='relu')
+        IA = tf.keras.layers.Concatenate()([input_layerZA, IA])
+        IA = dense_i(IA)
+        IB = tf.keras.layers.Concatenate()([input_layerZB, IB])
+        IB = dense_i(IB)
 
-    # concatenate with atom type and distance
-    # this is the final input into the feed-forward NN
-    AB_ = tf.keras.layers.Concatenate()([input_layerZA, input_layerZB, input_layerR, GA, GB])
-    BA_ = tf.keras.layers.Concatenate()([input_layerZB, input_layerZA, input_layerR, GB, GA])
+        # concatenate the atom centered and atom pair symmetry functions
+        GA = tf.keras.layers.Concatenate()([GA, IA])
+        GB = tf.keras.layers.Concatenate()([GB, IB])
 
-    # simple feed-forward NN with three dense layers
-    dense_1 = tf.keras.layers.Dense(dense_nodes, activation='relu')
-    dense_2 = tf.keras.layers.Dense(dense_nodes, activation='relu')
-    dense_3 = tf.keras.layers.Dense(dense_nodes, activation='relu')
-    linear = tf.keras.layers.Dense(1, activation='linear')
+        # concatenate with atom type and distance
+        # this is the final input into the feed-forward NN
+        AB_ = tf.keras.layers.Concatenate()([input_layerZA, input_layerZB, input_layerR, GA, GB])
+        BA_ = tf.keras.layers.Concatenate()([input_layerZB, input_layerZA, input_layerR, GB, GA])
 
-    AB_ = dense_1(AB_)
-    AB_ = dense_2(AB_)
-    AB_ = dense_3(AB_)
-    AB_ = linear(AB_)
+        # simple feed-forward NN with three dense layers
+        dense_1 = tf.keras.layers.Dense(dense_nodes, activation='relu')
+        dense_2 = tf.keras.layers.Dense(dense_nodes, activation='relu')
+        dense_3 = tf.keras.layers.Dense(dense_nodes, activation='relu')
+        linear = tf.keras.layers.Dense(1, activation='linear', use_bias=False)
 
-    BA_ = dense_1(BA_)
-    BA_ = dense_2(BA_)
-    BA_ = dense_3(BA_)
-    BA_ = linear(BA_)
+        AB_ = dense_1(AB_)
+        AB_ = dense_2(AB_)
+        AB_ = dense_3(AB_)
+        AB_ = linear(AB_)
 
-    # symmetrize with respect to A, B
-    output_layer = tf.keras.layers.add([AB_, BA_])
+        BA_ = dense_1(BA_)
+        BA_ = dense_2(BA_)
+        BA_ = dense_3(BA_)
+        BA_ = linear(BA_)
 
-    # normalize output by 1/r
-    output_layer = tf.keras.layers.multiply([output_layer, input_layerR[:,1]])
+        # symmetrize with respect to A, B
+        output_layer = tf.keras.layers.add([AB_, BA_])
 
+        # normalize output by 1/r
+        output_layer = tf.keras.layers.multiply([output_layer, input_layerR[:,1]])
+        output_layers.append(output_layer)
+
+    output_layer = tf.keras.layers.Concatenate()(output_layers)
     model = tf.keras.Model(inputs=[input_layerZA, input_layerZB, input_layerR, input_layerGA, input_layerGB, input_layerIA, input_layerIB], outputs=output_layer)
 
     return model
 
+
 @tf.function(experimental_relax_shapes=True)
-def train_single(model, optimizer, XA, XB, XAB, GA, GB, IA, IB, y_label):
+def predict_single(model, feat):
+    return model(feat)
+
+
+@tf.function(experimental_relax_shapes=True)
+def train_batch(model, optimizer, feats, labels):
     """
     Train the model on a single molecule (batch size == 1).
 
@@ -254,12 +379,41 @@ def train_single(model, optimizer, XA, XB, XAB, GA, GB, IA, IB, y_label):
     Return model error on this molecule (kcal/mol)
     """
     with tf.GradientTape() as tape:
-        y_pred = tf.math.reduce_sum(model([XA, XB, XAB, GA, GB, IA, IB]))
-        y_err = y_pred - y_label
-        loss = y_err * y_err
+        preds = tf.convert_to_tensor([tf.math.reduce_sum(model(feat), axis=0) for feat in feats])
+        err = preds - labels
+        err2 = tf.math.square(err)
+        loss = tf.math.reduce_mean(err2)
     grads = tape.gradient(loss, model.trainable_variables)
     optimizer.apply_gradients(zip(grads, model.trainable_variables))
-    return y_err
+    return err
+
+@tf.function(experimental_relax_shapes=True)
+def train_single(model, optimizer, feat, label):
+    """
+    Train the model on a single molecule (batch size == 1).
+
+    Args:
+        model: keras model
+        optimizer: keras optimizer
+        XA: XA
+        XB: XB
+        XAB: XAB
+        GA: GA
+        GB: GB
+        IA: IA
+        IB: IB
+        y_label: y_label
+
+    Return model error on this molecule (kcal/mol)
+    """
+    with tf.GradientTape() as tape:
+        pred = tf.math.reduce_sum(model(feat), axis=0)
+        err = pred - label
+        err2 = tf.math.square(err)
+        loss = tf.math.reduce_sum(err2)
+    grads = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(grads, model.trainable_variables))
+    return err
                                                 
 if __name__ == '__main__':
     pass
