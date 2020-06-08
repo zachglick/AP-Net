@@ -13,6 +13,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Train a single model to predict all four SAPT0 components')
 
+    parser.add_argument('datat',
+                        help='Dataset for training')
+    parser.add_argument('datav',
+                        help='Dataset for validation')
+
     # optional argument : model name
     parser.add_argument('-n', '--name',
                         help='Save trained model with this name.')
@@ -43,7 +48,7 @@ if __name__ == "__main__":
     parser.add_argument('--adam_lr',
                         help='Initial learning rate for the Adam optimizer',
                         type=float,
-                        default=1e-4)
+                        default=1e-3)
     parser.add_argument('--batch_size',
                         help='Batch size for training (number of dimers)',
                         type=int,
@@ -51,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument('--decay_rate',
                         help='learning rate decays by this factor every epoch',
                         type=float,
-                        default=(10 ** (-1 / 30.0)))
+                        default=0.2)
                         
 
     args = parser.parse_args(sys.argv[1:])
@@ -76,13 +81,11 @@ if __name__ == "__main__":
         model_dir = None 
         print(f'Training AP-Net Model')
 
-    dimert, labelt = util.get_dimers('nma-training')
-    dimerv, labelv = util.get_dimers('nma-validation')
-    #dimere, labele = util.get_dimers('nma-testing')
+    dimert, labelt = util.get_dimers(args.datat)
+    dimerv, labelv = util.get_dimers(args.datav)
 
     Nt = len(dimert)
     Nv = len(dimerv)
-    #Ne = len(dimere)
     Nb = math.ceil(Nt / batch_size)
 
     print(f'  Epochs:     {epochs}')
@@ -96,16 +99,17 @@ if __name__ == "__main__":
     print(f'  T/V split:  {Nt}/{Nv}')
 
     # custom training loop
-    model = util.make_model()
-    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+    model = util.make_model(nZ=8)
+    if model_dir is not None:
+        model.save(f'{model_dir}/model_best.h5')
+    lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
         initial_learning_rate = adam_lr,
         decay_steps = Nb,
         decay_rate = decay_rate,
         staircase=True, 
     )
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    best_mae = np.inf
-    print('\nEpoch ||  Validation Errors                                             Best ')
+    best_mae = np.array([np.inf, np.inf, np.inf, np.inf])
 
     for epoch in range(epochs):
 
@@ -124,8 +128,11 @@ if __name__ == "__main__":
             yt_errs.append(yt_err)
 
         yt_errs = np.concatenate(yt_errs)
-        print()
-        print_out_errors_comp(-1, yt_errs, ' T')
+        print('\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print(f' Epoch: {epoch+1}')
+        print('\n Training Errors:')
+        print_out_errors_comp(yt_errs)
+        yt_maes = np.average(np.absolute(yt_errs), axis=0)
 
         yv_preds, yv_errs = [], []
 
@@ -143,14 +150,33 @@ if __name__ == "__main__":
 
         yv_preds, yv_errs = np.array(yv_preds), np.array(yv_errs)
         #epoch_mae = np.average(np.absolute(yv_errs))
-        epoch_mae = np.average(np.absolute(np.sum(yv_errs, axis=1)))
+        epoch_mae = np.average(np.absolute(yv_errs), axis=0)
 
-        if epoch_mae < best_mae:
-            best_mae = epoch_mae 
-            if model_dir is not None:
-                model.save(f'{model_dir}/model.h5')
+        improved_mae = np.greater(best_mae, epoch_mae)
 
-            print_out_errors_comp(epoch+1, yv_errs, ' *')
-        else:
-            print_out_errors_comp(epoch+1, yv_errs)
-        print(f'          Epoch Time (s): Total={int(time.time() - start)}, Features={int(feature_time)}, Val={int(time.time() - start2)}')
+        yv_maes = np.average(np.absolute(yv_errs), axis=0)
+        if model_dir is not None:
+            model.save(f'{model_dir}/model_e{epoch+1}.h5')
+            if improved_mae.any():
+                model_best = tf.keras.models.load_model(f'{model_dir}/model_best.h5', compile=False)
+
+        for ci, cname in enumerate(['elst', 'exch', 'ind', 'disp']):
+            if improved_mae[ci]:
+                best_mae[ci] = epoch_mae[ci]
+                if model_dir is not None:
+                    for layer_index, layer in enumerate(model.layers):
+                        if layer.name.startswith(cname):
+                            model_best.layers[layer_index].set_weights(layer.get_weights())
+
+        if model_dir is not None and improved_mae.any():
+            model_best.save(f'{model_dir}/model_best.h5')
+        symbols = []
+        for i_mae in improved_mae:
+            if i_mae:
+                symbols.append('*')
+            else:
+                symbols.append(' ')
+
+        print('\n Validation Errors:')
+        print_out_errors_comp(yv_errs, symbols)
+        print(f'\n Epoch Time (s): Total={int(time.time() - start)}, Features={int(feature_time)}, Val={int(time.time() - start2)}')

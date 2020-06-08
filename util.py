@@ -16,6 +16,8 @@ z_to_ind = {
     8  : 3,
     9  : 4,
     16 : 5,
+    17 : 6,
+    35 : 7,
 }
 
 
@@ -27,27 +29,26 @@ def print_out_errors(epoch, err, symbol=''):
            f'RMSE:{np.sqrt(np.average(np.square(err))):6.3f}   '
            f'MAE:{np.average(np.absolute(err)):6.3f} {symbol}'))
 
-def print_out_errors_comp(epoch, err, symbol=''):
+def print_out_errors_comp(err, symbols='    '):
     """ err is a numpy array w/ dims [NMOL x 4] """
     err_tot = np.sum(err, axis=1)
-    print()
-    print((f'{epoch:4d}  ||  '
-           f'Range: [{np.min(err_tot):7.3f},{np.max(err_tot):6.3f}]   '
+    print((f' Total || '
+           f'Range: [{np.min(err_tot):8.3f},{np.max(err_tot):7.3f}]   '
            f'ME:{np.average(err_tot):6.3f}   '
            f'RMSE:{np.sqrt(np.average(np.square(err_tot))):6.3f}   '
-           f'MAE:{np.average(np.absolute(err_tot)):6.3f} {symbol}'))
-    for ci in range(4):
+           f'MAE:{np.average(np.absolute(err_tot)):6.3f} ||'))
+    for ci, cname in enumerate(['Elst', 'Exch', 'Ind ', 'Disp']):
         err_comp = err[:,ci]
-        print((f'      ||  '
-               f'Range: [{np.min(err_comp):7.3f},{np.max(err_comp):6.3f}]   '
+        print((f' {cname}  || '
+               f'Range: [{np.min(err_comp):8.3f},{np.max(err_comp):7.3f}]   '
                f'ME:{np.average(err_comp):6.3f}   '
                f'RMSE:{np.sqrt(np.average(np.square(err_comp))):6.3f}   '
-               f'MAE:{np.average(np.absolute(err_comp)):6.3f}'))
+               f'MAE:{np.average(np.absolute(err_comp)):6.3f} || {symbols[ci]}'))
 
 def int_to_onehot(arr):
     """ arrs is a numpy array of integers w/ dims [NATOM]"""
     assert len(arr.shape) == 1
-    arr2 = np.zeros((arr.shape[0], 6), dtype=np.int)
+    arr2 = np.zeros((arr.shape[0], len(z_to_ind)), dtype=np.int)
     for i, z in enumerate(arr):
         if z > 0:
             arr2[i, z_to_ind[z]] = 1
@@ -266,7 +267,7 @@ def get_dataset(dataset, ACSF_nmu=43, APSF_nmu=21, ACSF_eta=100, APSF_eta=25):
     return ZA, ZB, GA, GB, IA, IB, RAB, y
 
 
-def make_model(nZ=6, ACSF_nmu=43, APSF_nmu=21):
+def make_model(nZ, ACSF_nmu=43, APSF_nmu=21):
     """
     Returns a keras model for atomic pairwise intermolecular energy predictions
     """
@@ -295,7 +296,7 @@ def make_model(nZ=6, ACSF_nmu=43, APSF_nmu=21):
 
     output_layers = []
 
-    for component_ind in range(4):
+    for component_ind, component_name in enumerate(['elst', 'exch', 'ind', 'disp']):
         # flatten the symmetry functions
         GA = tf.keras.layers.Flatten()(input_layerGA)
         GB = tf.keras.layers.Flatten()(input_layerGB)
@@ -303,14 +304,14 @@ def make_model(nZ=6, ACSF_nmu=43, APSF_nmu=21):
         IB = tf.keras.layers.Flatten()(input_layerIB)
 
         # encode the concatenation of the element and ACSF into a smaller fixed-length vector
-        dense_r = tf.keras.layers.Dense(ACSF_nodes, activation='relu')
+        dense_r = tf.keras.layers.Dense(ACSF_nodes, activation='relu', name=f'{component_name}_dense_r')
         GA = tf.keras.layers.Concatenate()([input_layerZA, GA])
         GA = dense_r(GA)
         GB = tf.keras.layers.Concatenate()([input_layerZB, GB])
         GB = dense_r(GB)
 
         # encode the concatenation of the element and APSF into a smaller fixed-length vector
-        dense_i = tf.keras.layers.Dense(APSF_nodes, activation='relu')
+        dense_i = tf.keras.layers.Dense(APSF_nodes, activation='relu', name=f'{component_name}_dense_i')
         IA = tf.keras.layers.Concatenate()([input_layerZA, IA])
         IA = dense_i(IA)
         IB = tf.keras.layers.Concatenate()([input_layerZB, IB])
@@ -326,10 +327,10 @@ def make_model(nZ=6, ACSF_nmu=43, APSF_nmu=21):
         BA_ = tf.keras.layers.Concatenate()([input_layerZB, input_layerZA, input_layerR, GB, GA])
 
         # simple feed-forward NN with three dense layers
-        dense_1 = tf.keras.layers.Dense(dense_nodes, activation='relu')
-        dense_2 = tf.keras.layers.Dense(dense_nodes, activation='relu')
-        dense_3 = tf.keras.layers.Dense(dense_nodes, activation='relu')
-        linear = tf.keras.layers.Dense(1, activation='linear', use_bias=False)
+        dense_1 = tf.keras.layers.Dense(dense_nodes, activation='relu', name=f'{component_name}_dense_1')
+        dense_2 = tf.keras.layers.Dense(dense_nodes, activation='relu', name=f'{component_name}_dense_2')
+        dense_3 = tf.keras.layers.Dense(dense_nodes, activation='relu', name=f'{component_name}_dense_3')
+        linear = tf.keras.layers.Dense(1, activation='linear', name=f'{component_name}_linear', use_bias=False)
 
         AB_ = dense_1(AB_)
         AB_ = dense_2(AB_)

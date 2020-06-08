@@ -6,7 +6,7 @@ np.seterr(divide='ignore', invalid='ignore')
 import pandas as pd
 from scipy.spatial import distance_matrix
 
-zlist = [1.0, 6.0, 7.0, 8.0, 9.0, 16.0]
+zlist = [1.0, 6.0, 7.0, 8.0, 9.0, 16.0, 17.0, 35.0]
 
 charge_to_index = { 0.0  : 100000,
                     1.0  : 0,
@@ -15,6 +15,8 @@ charge_to_index = { 0.0  : 100000,
                     8.0  : 3,
                     9.0  : 4,
                     16.0 : 5,
+                    17.0 : 6,
+                    35.0 : 7,
                    }
 
 
