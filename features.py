@@ -155,32 +155,35 @@ def apsfs(ZA, RA, ZB, RB, mus, eta=100.0, rc1=0.0, rc2=8.0):
 
     A = cos_theta_im(RA, RB) # angles
 
-    # sparse implementation, good for big systems
-    #G = np.zeros((natomA, natomB, nmu, ntype))
-    #for a_A in range(natomA):
-    #    e_A = zindexA[a_A]
-    #    if e_A > 100:
-    #        continue
-    #    for a_B, d_AB in enumerate(DAB[a_A]):
-    #        e_B = zindexB[a_B]
-    #        if d_AB > rc2 or e_B > 100:
-    #            continue
-    #        for a_A2, d_AA2 in enumerate(DAA[a_A]):
-    #            e_A2 = zindexA[a_A2]
-    #            if d_AA2 > rc2 or e_A2 > 100:
-    #                continue
-    #            c_th = A[a_A, a_B, a_A2]
-    #            G[a_A, a_B, :, e_A2] += np.exp(-1.0 * np.square(c_th - mus) * eta) * CAA[a_A, a_A2] #* C[a_j, a_k]
+    if natomA > 50 or natomB > 50:
+        # sparse implementation, good for big systems
+        G = np.zeros((natomA, natomB, nmu, ntype))
+        for a_A in range(natomA):
+            e_A = zindexA[a_A]
+            if e_A > 100:
+                continue
+            for a_B, d_AB in enumerate(DAB[a_A]):
+                e_B = zindexB[a_B]
+                if d_AB > rc2 or e_B > 100:
+                    continue
+                for a_A2, d_AA2 in enumerate(DAA[a_A]):
+                    e_A2 = zindexA[a_A2]
+                    if d_AA2 > rc2 or e_A2 > 100:
+                        continue
+                    c_th = A[a_A, a_B, a_A2]
+                    G[a_A, a_B, :, e_A2] += np.exp(-1.0 * np.square(c_th - mus) * eta) * CAA[a_A, a_A2] #* C[a_j, a_k]
 
-    G = np.expand_dims(A, 2)
-    G = np.tile(G, [1,1,nmu,1]) - mus.reshape((1,1,nmu,1))
-    G = np.exp(-1.0 * np.square(G) * eta)
-    G = np.einsum('ijkl,il->ijkl',G,CAA)
-    emaskA = np.zeros((natomA, ntype))
-    for a, e in enumerate(zindexA):
-        emaskA[a,e] = 1
-    G = np.einsum('ijkl,lz->ijkz', G, emaskA)
-    G = np.einsum('ijkl,ij->ijkl', G, (DAB < rc2))
+    else:
+        # dense implementation, good for small systems
+        G = np.expand_dims(A, 2)
+        G = np.tile(G, [1,1,nmu,1]) - mus.reshape((1,1,nmu,1))
+        G = np.exp(-1.0 * np.square(G) * eta)
+        G = np.einsum('ijkl,il->ijkl',G,CAA)
+        emaskA = np.zeros((natomA, ntype))
+        for a, e in enumerate(zindexA):
+            emaskA[a,e] = 1
+        G = np.einsum('ijkl,lz->ijkz', G, emaskA)
+        G = np.einsum('ijkl,ij->ijkl', G, (DAB < rc2))
 
     return G
 
